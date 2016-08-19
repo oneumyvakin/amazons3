@@ -145,7 +145,7 @@ func (self AmazonS3) GetBucketsList() (list []string, err error) {
 
 // List files and folders.
 // SubFolder can be ""
-func (self AmazonS3) GetBucketFilesList(subFolder string) (list []string, err error) {
+func (self AmazonS3) GetBucketFilesList(subFolder string) ([]*s3.Object, error) {
 	if subFolder != "" {
 		if !strings.HasSuffix(subFolder, "/") {
 			subFolder = subFolder + "/"
@@ -154,15 +154,11 @@ func (self AmazonS3) GetBucketFilesList(subFolder string) (list []string, err er
 	}
 	result, err := self.Svc.ListObjects(&s3.ListObjectsInput{Bucket: &self.Bucket, Prefix: &subFolder})
 	if err != nil {
-		return list, fmt.Errorf("Failed to list objects: %s\n", err)
-	}
-	list = []string{}
-	for _, object := range result.Contents {
-		list = append(list, strings.TrimPrefix(*object.Key, subFolder))
+		return nil, fmt.Errorf("Failed to list objects: %s\n", err)
 	}
 
-	self.Log.Println("Get bucket files:", list)
-	return
+	self.Log.Println("Get bucket files:", result.Contents)
+	return result.Contents, nil
 }
 
 // Get file info
