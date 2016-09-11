@@ -25,7 +25,7 @@ func (self AmazonS3) Upload(filePath, destinationPath string, useGzip bool) erro
 		return fmt.Errorf("Failed to open file %s for upload: %s\n", filePath, err)
 	}
 
-	key := destinationPath + "/" + filepath.Base(filePath)
+	key := destinationPath + filepath.Base(filePath)
 
 	// Not required, but you could zip the file before uploading it
 	// using io.Pipe read/writer to stream gzip'd file contents.
@@ -64,7 +64,7 @@ func (self AmazonS3) Upload(filePath, destinationPath string, useGzip bool) erro
 		}()
 	}
 
-	self.Log.Printf("Upload %s to %s with Gzip: %s\n", filePath, key, useGzip)
+	self.Log.Printf("Upload %s to %s with Gzip: %t\n", filePath, key, useGzip)
 
 	uploader := s3manager.NewUploader(
 		session.New(
@@ -141,7 +141,7 @@ func (self AmazonS3) ResumeUpload(filePath, key, uploadId string, useGzip bool) 
 		}()
 	}
 
-	self.Log.Printf("Resume Upload %s to %s with Gzip: %s\n", filePath, key, useGzip)
+	self.Log.Printf("Resume Upload %s to %s with Gzip: %t\n", filePath, key, useGzip)
 
 	resp, err := self.ListParts(key, uploadId)
 	if err != nil {
