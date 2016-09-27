@@ -80,6 +80,22 @@ func (self AmazonS3) IsRegionValid(name string) error {
 	return fmt.Errorf("Failed to validate region: %s", name)
 }
 
+// Get Bucket's region
+func (self AmazonS3) GetBucketLocation(name string) (region string, err error) {
+	params := &s3.GetBucketLocationInput{
+		Bucket: aws.String(name), // Required
+	}
+	self.Log.Printf("Get Bucket location: %s\n", name)
+	resp, err := self.Svc.GetBucketLocation(params)
+	if err != nil {
+		return "", err
+	}
+	region = *resp.LocationConstraint
+
+	self.Log.Printf("Bucket %s region: %s", name, region)
+	return
+}
+
 func (self AmazonS3) CreateBucket(name string) error {
 	buckets, err := self.GetBucketsList()
 	if err != nil {
