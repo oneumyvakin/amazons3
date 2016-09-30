@@ -19,12 +19,6 @@ type AmazonS3 struct {
 	Bucket string
 }
 
-type UploadErr struct {
-	Code     string
-	Message  string
-	UploadID string
-}
-
 type downloader struct {
 	AmazonS3
 
@@ -41,16 +35,6 @@ type filePart struct {
 	Length     int64
 	PartNumber int64
 	Body       []byte
-}
-
-func (self UploadErr) Error() string {
-	return fmt.Sprintf("Upload error. Code: %s, Message: %s, Upload ID: %s", self.Code, self.Message, self.UploadID)
-}
-
-// String returns the string representation of the error.
-// Alias for Error to satisfy the stringer interface.
-func (self UploadErr) String() string {
-	return self.Error()
 }
 
 func (self AmazonS3) GetRegions() []string {
@@ -113,11 +97,13 @@ func (self AmazonS3) CreateBucket(name string) error {
 		Bucket: &name,
 	})
 	if err != nil {
-		return fmt.Errorf("Failed to create bucket %s: %s", name, err)
+		self.Log.Printf("Failed to create bucket %s: %s", name, err)
+		return err
 	}
 
 	if err = self.Svc.WaitUntilBucketExists(&s3.HeadBucketInput{Bucket: &name}); err != nil {
-		return fmt.Errorf("Failed to wait for bucket to exist %s: %s\n", name, err)
+		self.Log.Printf("Failed to wait for bucket to exist %s: %s\n", name, err)
+		return err
 	}
 
 	self.Log.Println("Create bucket:", name)
@@ -138,7 +124,8 @@ func (self AmazonS3) CreateFolder(path string) error {
 func (self AmazonS3) GetBucketsList() (list []string, err error) {
 	result, err := self.Svc.ListBuckets(&s3.ListBucketsInput{})
 	if err != nil {
-		return list, fmt.Errorf("Failed to list buckets: %s\n", err)
+		self.Log.Printf("Failed to list buckets: %s\n", err)
+		return
 	}
 
 	for _, bucket := range result.Buckets {
@@ -155,7 +142,8 @@ func (self AmazonS3) GetBucketFilesList(subFolder string) ([]*s3.Object, error) 
 	subFolder = strings.TrimSuffix(subFolder, "/")
 	result, err := self.Svc.ListObjects(&s3.ListObjectsInput{Bucket: &self.Bucket, Prefix: &subFolder})
 	if err != nil {
-		return nil, fmt.Errorf("Failed to list objects: %s\n", err)
+		self.Log.Printf("Failed to list objects: %s\n", err)
+		return nil, err
 	}
 
 	self.Log.Printf("Get bucket files in /%s:\n", subFolder, result.Contents)
@@ -171,8 +159,8 @@ func (self AmazonS3) GetFileInfo(path string) (resp *s3.HeadObjectOutput, err er
 	})
 
 	if err != nil {
-		self.Log.Println("Failed to get file info error:", path, err)
-		return nil, err
+		self.Log.Printf("Failed to get file %s info error: %s\n", path, err)
+		return
 	}
 	self.Log.Println("Get file info:", path, resp)
 
@@ -190,8 +178,8 @@ func (self AmazonS3) GetFilePart(path string, partRange string) (resp *s3.GetObj
 	})
 
 	if err != nil {
-		self.Log.Println("Failed to get file part:", path, err)
-		return nil, err
+		self.Log.Printf("Failed to get file %s part: %s\n", path, err)
+		return
 	}
 	self.Log.Println("Get file part:", path, resp)
 	return
@@ -205,7 +193,7 @@ func (self AmazonS3) Delete(path string) (err error) {
 
 	if err != nil {
 		self.Log.Println("Failed to delete:", path, err)
-		return err
+		return
 	}
 	self.Log.Println("Delete path:", path, resp)
 	return
@@ -218,7 +206,8 @@ func (self AmazonS3) ListUnfinishedUploads() ([]*s3.MultipartUpload, error) {
 		Bucket: aws.String(self.Bucket), // Required
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Failed list unfinised uploads: %s\n", err)
+		self.Log.Printf("Failed list unfinised uploads: %s\n", err)
+		return nil, err
 	}
 	self.Log.Println("List bucket's unfinished uploads", resp)
 
@@ -256,6 +245,10 @@ func (self AmazonS3) AbortUpload(key string, uploadId string) (err error) {
 // Complete upload
 func (self AmazonS3) CompleteUpload(key string, uploadId string) (err error) {
 	respParts, err := self.ListParts(key, uploadId) // Just for debug
+	if err != nil {
+		self.Log.Printf("Failed to complete upload: Failed to list parts for key %s of upload id %s: %s\n", key, uploadId, err)
+		return
+	}
 
 	var completedParts []*s3.CompletedPart
 	for _, part := range respParts.Parts {

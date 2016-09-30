@@ -5,14 +5,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
-
 	"crypto/md5"
 	"encoding/hex"
+
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
@@ -86,12 +86,7 @@ func (self AmazonS3) Upload(filePath, destinationPath string, useGzip bool) erro
 		if multiErr, ok := err.(s3manager.MultiUploadFailure); ok {
 			// Process error and its associated uploadID
 			self.Log.Printf("Error code: %s, Message: %s, UploadID: %s\n", multiErr.Code(), multiErr.Message(), multiErr.UploadID())
-			uploadErr := UploadErr{
-				Code:     multiErr.Code(),
-				Message:  multiErr.Message(),
-				UploadID: multiErr.UploadID(),
-			}
-			return uploadErr
+			return multiErr
 		}
 		return fmt.Errorf("Failed upload file %s: %s\n", filePath, err)
 	}
@@ -281,7 +276,8 @@ func (self AmazonS3) getPartEtag(part []byte) (etag string, err error) {
 	hasher := md5.New()
 	_, err = hasher.Write(part)
 	if err != nil {
-		return "", fmt.Errorf("Failed to write part to hasher: %s", err)
+		self.Log.Printf("Failed to write part to hasher: %s", err)
+		return
 	}
 	etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hasher.Sum(nil)))
 
