@@ -50,7 +50,8 @@ func (self AmazonS3) Download(fileName, destinationPath string) error {
 			Key:    aws.String(fileName),
 		})
 	if err != nil {
-		return fmt.Errorf("Failed to download file %s to destination path %s with error: %s\n", fileName, destinationPath, err)
+		self.Log.Printf("Failed to download file %s to destination path %s with error: %s\n", fileName, destinationPath, err)
+		return err
 	}
 
 	self.Log.Printf("Downloaded file %s with size %s\n", file.Name(), numBytes)
@@ -60,7 +61,8 @@ func (self AmazonS3) Download(fileName, destinationPath string) error {
 func (self AmazonS3) ResumeDownload(fileName, destinationPath string) error {
 	remoteFileInfo, err := self.GetFileInfo(fileName)
 	if err != nil {
-		return fmt.Errorf("Failed to get file %s: %s\n", fileName, err)
+		self.Log.Printf("Failed to get file %s: %s\n", fileName, err)
+		return err
 	}
 
 	file, err := os.OpenFile(destinationPath, os.O_WRONLY, 666)
