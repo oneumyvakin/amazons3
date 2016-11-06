@@ -161,6 +161,10 @@ func (self *downloader) asyncDownloadPart(taskPartChan <-chan filePart, wg *sync
 			defer self.IoClose(resp.Body)
 
 			for {
+				if self.Err != nil {
+					self.Log.Printf("Failed to write download %s: %s\n", part.Range, self.Err)
+					return
+				}
 				if self.FileOffset == part.Offset {
 					n, err := io.Copy(self.File, resp.Body)
 					if err != nil {
