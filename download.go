@@ -1,6 +1,7 @@
 package amazons3
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -154,7 +155,8 @@ func (self *downloader) asyncDownloadPart(taskPartChan <-chan filePart, wg *sync
 			})
 			self.Log.Printf("Request sent for %s range %s\n", part.Key, part.Range)
 			if err != nil {
-				self.Log.Printf("Failed to download file %s range %s: %s\n", part.Key, part.Range, err)
+				self.Err = errors.New(fmt.Sprintf("Failed to download file %s range %s: %s\n", part.Key, part.Range, err))
+				self.Log.Printf(self.Err.Error())
 				return
 			}
 			self.Log.Printf("Response for %s range %s: %s\n", part.Key, part.Range, resp)
@@ -170,8 +172,8 @@ func (self *downloader) asyncDownloadPart(taskPartChan <-chan filePart, wg *sync
 				if self.FileOffset == part.Offset {
 					n, err := io.Copy(self.File, resp.Body)
 					if err != nil {
-						self.Err = err
-						self.Log.Printf("Failed to write file %s range %s: %s\n", part.Key, part.Range, err)
+						self.Err = errors.New(fmt.Sprintf("Failed to write file %s range %s: %s\n", part.Key, part.Range, err))
+						self.Log.Printf(self.Err.Error())
 						return
 					}
 					self.Log.Printf("Finish write %d bytes part range %s for key %s \n", n, part.Range, part.Key)

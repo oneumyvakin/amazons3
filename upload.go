@@ -4,18 +4,24 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"crypto/md5"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
-	"crypto/md5"
-	"encoding/hex"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+)
+
+const (
+	DefaultUploadRetries int = 5
 )
 
 // Upload filePath to destinationPath, where destinationPath contains only folders like /folder/folder2
@@ -145,16 +151,21 @@ func (self AmazonS3) ResumeUpload(filePath, key, uploadId string, useGzip bool) 
 
 	partQueue := make(chan filePart, s3manager.DefaultUploadConcurrency)
 	var wg sync.WaitGroup
+	var resultErrors []error
 
 	for i := 0; i < s3manager.DefaultUploadConcurrency; i++ {
 		wg.Add(1)
-		go self.asyncUploadPart(key, uploadId, partQueue, &wg)
+		go self.asyncUploadPart(key, uploadId, partQueue, &wg, &resultErrors)
 	}
 
 	go self.getFileParts(partQueue, pipeReader, resp.Parts)
 
 	self.Log.Println("Wait for all parts are uploading...")
 	wg.Wait()
+
+	if len(resultErrors) > 0 {
+		return fmt.Errorf("Failed to resume upload with key %s: %s\n", key, resultErrors)
+	}
 
 	err = self.CompleteUpload(key, uploadId)
 	if err != nil {
@@ -201,13 +212,14 @@ func (self AmazonS3) getFileParts(partChan chan<- filePart, reader io.Reader, up
 		}
 
 		offset = offset + int64(len(part))
-		lastPartNumber = lastPartNumber + 1
 
 		if errRead == io.EOF || errRead == io.ErrUnexpectedEOF {
-			self.Log.Printf("EOF or ErrUnexpectedEOF. All parts are read and send to upload. Last part is %s, offset is %d", lastPartNumber, offset)
+			self.Log.Printf("%s. All parts are read and send to upload. Last part is %s, offset is %d", errRead, lastPartNumber, offset)
 			close(partChan)
 			return
 		}
+
+		lastPartNumber = lastPartNumber + 1
 	}
 }
 
@@ -216,7 +228,7 @@ func (self AmazonS3) needToUpload(uploadedParts []*s3.Part, partNumber int64, pa
 		if *part.PartNumber == partNumber {
 			self.Log.Printf("Part number %s with ETag %s found\n", *part.PartNumber, string(*part.ETag))
 
-			if *part.ETag == partEtag {
+			if strings.ToLower(*part.ETag) == strings.ToLower(partEtag) {
 				self.Log.Printf("Match Etag for part number %s with size %s ETag %s == %s.\n", *part.PartNumber, *part.Size, string(*part.ETag), partEtag)
 				return false
 			} else {
@@ -230,24 +242,34 @@ func (self AmazonS3) needToUpload(uploadedParts []*s3.Part, partNumber int64, pa
 	return true
 }
 
-func (self AmazonS3) asyncUploadPart(key string, uploadId string, partChan <-chan filePart, wg *sync.WaitGroup) {
+func (self AmazonS3) asyncUploadPart(key string, uploadId string, partChan <-chan filePart, wg *sync.WaitGroup, resultErrors *[]error) {
 	defer wg.Done()
 	for {
 		if part, ok := <-partChan; ok {
-			self.Log.Printf("Start to upload part number %s for key %s\n", part.PartNumber, key)
+			self.Log.Printf("Start to upload part number %d for key %s\n", part.PartNumber, key)
+			var err error
+			for try := 0; try <= DefaultUploadRetries; try++ {
+				_, err = self.Svc.UploadPart(&s3.UploadPartInput{
+					Bucket:     aws.String(self.Bucket),    // Required
+					Key:        aws.String(key),            // Required
+					PartNumber: aws.Int64(part.PartNumber), // Required
+					UploadId:   aws.String(uploadId),       // Required
+					Body:       bytes.NewReader(part.Body),
+				})
+				if err != nil {
+					self.Log.Printf("Try %d of upload part number %d for key %s has failed: %s. Repeat...", try, part.PartNumber, key, err)
+				} else {
+					break
+				}
+			}
 
-			_, err := self.Svc.UploadPart(&s3.UploadPartInput{
-				Bucket:     aws.String(self.Bucket),    // Required
-				Key:        aws.String(key),            // Required
-				PartNumber: aws.Int64(part.PartNumber), // Required
-				UploadId:   aws.String(uploadId),       // Required
-				Body:       bytes.NewReader(part.Body),
-			})
 			if err != nil {
-				self.Log.Printf("Failed to upload part number %s for key %s: %s\n", part.PartNumber, key, err)
+				resultErr := errors.New(fmt.Sprintf("Failed to upload part number %d for key %s: %s\n", part.PartNumber, key, err))
+				*resultErrors = append(*resultErrors, resultErr)
+				self.Log.Printf("%s", resultErr)
 				return
 			}
-			self.Log.Printf("Finished upload part number %s for key %s\n", part.PartNumber, key)
+			self.Log.Printf("Finished upload part number %d for key %s\n", part.PartNumber, key)
 		} else {
 			self.Log.Println("Upload channel closed. Return.")
 
@@ -279,7 +301,7 @@ func (self AmazonS3) getPartEtag(part []byte) (etag string, err error) {
 		self.Log.Printf("Failed to write part to hasher: %s", err)
 		return
 	}
-	etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hasher.Sum(nil)))
+	etag = fmt.Sprintf("\"%s\"", strings.ToLower(hex.EncodeToString(hasher.Sum(nil))))
 
 	return
 }
